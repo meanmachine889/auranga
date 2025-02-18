@@ -1,6 +1,9 @@
+import 'dart:convert'; // For JSON encoding/decoding
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'bluetooth_device_page.dart';
 
 void main() {
   runApp(const MyApp());
@@ -13,71 +16,116 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Bluetooth Scanner',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+      theme: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: Colors.black,
+        colorScheme: ColorScheme.dark(
+          primary: Colors.grey[800]!,
+          secondary: Colors.blueGrey,
+        ),
       ),
-      home: const BluetoothScannerPage(),
+      home: const LoginPage(),
     );
   }
 }
 
-class BluetoothScannerPage extends StatefulWidget {
-  const BluetoothScannerPage({super.key});
+class LoginPage extends StatelessWidget {
+  const LoginPage({super.key});
 
   @override
-  _BluetoothScannerPageState createState() => _BluetoothScannerPageState();
+  Widget build(BuildContext context) {
+    TextEditingController usernameController = TextEditingController();
+    TextEditingController passwordController = TextEditingController();
+
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text("Login", style: TextStyle(fontSize: 24, color: Colors.white)),
+              const SizedBox(height: 20),
+              TextField(
+                controller: usernameController,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: "Username",
+                  labelStyle: TextStyle(color: Colors.grey),
+                  filled: true,
+                  fillColor: Colors.grey[900],
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: "Password",
+                  labelStyle: TextStyle(color: Colors.grey),
+                  filled: true,
+                  fillColor: Colors.grey[900],
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(builder: (context) => const HomePage()),
+                  );
+                },
+                child: const Text("Login"),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
-class _BluetoothScannerPageState extends State<BluetoothScannerPage> {
-  List<BluetoothDevice> pairedDevices = [];
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  _HomePageState createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  List<String> storedData = [];
   List<ScanResult> scanResults = [];
-  BluetoothDevice? connectedDevice;
-  BluetoothCharacteristic? characteristic;
-  String receivedData = "No data received";
 
   @override
   void initState() {
     super.initState();
-    requestPermissions().then((_) {
-      getPairedDevices();
-      startScan();
-    });
+    _loadStoredData();
   }
 
-  /// ✅ Request necessary Bluetooth & Location permissions
-  Future<void> requestPermissions() async {
-    await Permission.bluetooth.request();
-    await Permission.bluetoothScan.request();
-    await Permission.bluetoothConnect.request();
-    await Permission.location.request(); // Required for scanning
+  // Load stored data from SharedPreferences
+  void _loadStoredData() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? storedDataString = prefs.getString('storedData');
+
+    // If data exists, update the list
+    if (storedDataString != null && storedDataString.isNotEmpty) {
+      List<String> decodedData = List<String>.from(jsonDecode(storedDataString));
+      setState(() {
+        storedData = decodedData;
+      });
+    }
   }
 
-  /// ✅ Fetch paired devices
-  Future<void> getPairedDevices() async {
-    List<BluetoothDevice> devices = (await FlutterBluePlus.systemDevices) as List<BluetoothDevice>;
-    setState(() {
-      pairedDevices = devices;
-    });
+  // Save data to SharedPreferences
+  void _saveData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('storedData', jsonEncode(storedData));
   }
 
-  /// ✅ Start scanning for Bluetooth devices
-  void startScan() async {
-    if (!(await FlutterBluePlus.isSupported)) {
-      print("BLE not supported on this device");
-      return;
-    }
-
-    if (!(await FlutterBluePlus.isOn)) {
-      print("Bluetooth is OFF. Please enable Bluetooth.");
-      return;
-    }
-
-    if (await FlutterBluePlus.isScanning.first) {
-      FlutterBluePlus.stopScan();
-    }
-
+  void startScan() {
     FlutterBluePlus.startScan(timeout: const Duration(seconds: 5));
-
     FlutterBluePlus.scanResults.listen((results) {
       setState(() {
         scanResults = results;
@@ -85,114 +133,134 @@ class _BluetoothScannerPageState extends State<BluetoothScannerPage> {
     });
   }
 
-  /// ✅ Connect to selected Bluetooth device
-  Future<void> connectToDevice(BluetoothDevice device) async {
-    try {
-      await device.connect();
-      List<BluetoothService> services = await device.discoverServices();
-
-      for (var service in services) {
-        for (var char in service.characteristics) {
-          if (char.properties.notify || char.properties.read) {
-            setState(() {
-              connectedDevice = device;
-              characteristic = char;
-            });
-            readSensorData();
-            break;
-          }
-        }
-      }
-    } catch (e) {
-      print("Connection failed: $e");
-    }
+  void showScanModal() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text("Scanned Devices",
+                  style: TextStyle(fontSize: 18, color: Colors.white)),
+              const Divider(color: Colors.grey),
+              scanResults.isEmpty
+                  ? const Padding(
+                padding: EdgeInsets.all(20.0),
+                child: Text("No devices found", style: TextStyle(color: Colors.grey)),
+              )
+                  : Expanded(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: scanResults.length,
+                  itemBuilder: (context, index) {
+                    final device = scanResults[index].device;
+                    return ListTile(
+                      title: Text(
+                        device.name.isNotEmpty
+                            ? device.name
+                            : "Unknown Device",
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                      subtitle: Text(
+                        device.remoteId.str,
+                        style: const TextStyle(color: Colors.grey),
+                      ),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                BluetoothDevicePage(device: device),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
-  /// ✅ Read data from connected Bluetooth device
-  void readSensorData() async {
-    if (characteristic != null) {
-      await characteristic!.setNotifyValue(true);
-      characteristic!.lastValueStream.listen((value) {
-        setState(() {
-          receivedData = value.toString();
-        });
-        print("Received Data: $value");
-      });
-    }
+  // Show form to input data and store in SharedPreferences
+  void showDataInputForm() {
+    final TextEditingController dataController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("Enter Data to Store"),
+          content: TextField(
+            controller: dataController,
+            decoration: const InputDecoration(
+              hintText: "Enter your data",
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+              },
+              child: const Text("Cancel"),
+            ),
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  storedData.add(dataController.text);
+                });
+                _saveData(); // Save the updated data list
+                Navigator.pop(context);
+              },
+              child: const Text("Save"),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Bluetooth Scanner")),
-      body: connectedDevice == null
-          ? Column(
+      appBar: AppBar(title: const Text("Home")),
+      body: Column(
         children: [
-          ElevatedButton(
-            onPressed: () {
-              getPairedDevices();
-              startScan();
-            },
-            child: const Text("Refresh Devices"),
-          ),
-          const SizedBox(height: 10),
-          const Text("🔵 Paired Devices", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           Expanded(
             child: ListView.builder(
-              itemCount: pairedDevices.length,
+              itemCount: storedData.length,
               itemBuilder: (context, index) {
-                final device = pairedDevices[index];
                 return ListTile(
-                  title: Text(device.name.isNotEmpty ? device.name : "Unknown Device"),
-                  subtitle: Text(device.remoteId.str),
-                  onTap: () => connectToDevice(device),
+                  title: Text(storedData[index], style: const TextStyle(color: Colors.white)),
                 );
               },
             ),
           ),
-          const Divider(),
-          const Text("🔍 Scanned Devices", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          Expanded(
-            child: ListView.builder(
-              itemCount: scanResults.length,
-              itemBuilder: (context, index) {
-                final device = scanResults[index].device;
-                return ListTile(
-                  title: Text(device.name.isNotEmpty ? device.name : "Unknown Device"),
-                  subtitle: Text(device.remoteId.str),
-                  onTap: () => connectToDevice(device),
-                );
-              },
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: ElevatedButton(
+              onPressed: showDataInputForm,
+              child: const Text("Add Data"),
             ),
           ),
         ],
-      )
-          : Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              "Connected to ${connectedDevice!.name}",
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 10),
-            Text(
-              "Received Data: $receivedData",
-              style: const TextStyle(fontSize: 16, color: Colors.green),
-            ),
-            const SizedBox(height: 10),
-            ElevatedButton(
-              onPressed: () {
-                connectedDevice!.disconnect();
-                setState(() {
-                  connectedDevice = null;
-                  receivedData = "No data received";
-                });
-              },
-              child: const Text("Disconnect"),
-            ),
-          ],
-        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: Colors.blueGrey,
+        child: const Icon(Icons.add, color: Colors.white),
+        onPressed: () {
+          startScan();
+          showScanModal();
+        },
       ),
     );
   }
